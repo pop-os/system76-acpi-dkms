@@ -1,0 +1,5 @@
+system76-coreboot-dkms (1.0.0) bionic; urgency=medium
+
+  * Initial release
+
+ -- Jeremy Soller <jeremy@system76.com>  Fri, 01 Mar 2019 16:20:57 -0700
