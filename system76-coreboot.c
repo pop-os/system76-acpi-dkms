@@ -19,6 +19,7 @@
 
 struct system76_data {
 	struct acpi_device * acpi_dev;
+	struct input_dev * input_dev;
 	struct led_classdev ap_led;
 	struct led_classdev kb_led;
 };
@@ -94,11 +95,19 @@ static void kb_led_set(struct led_classdev * led, enum led_brightness value) {
 	system76_set(data, "SKBL", (int)value);
 }
 
+static void system76_key(struct system76_data * data, unsigned int code) {
+	input_report_key(data->input_dev, code, 1);
+	input_sync(data->input_dev);
+	input_report_key(data->input_dev, code, 0);
+	input_sync(data->input_dev);
+}
 
 static void system76_notify(struct acpi_device *acpi_dev, u32 event) {
 	struct system76_data * data = acpi_driver_data(acpi_dev);
 
-	if (event == 0x80) {
+	if (event == KEY_TOUCHPAD_TOGGLE) {
+		system76_key(data, KEY_TOUCHPAD_TOGGLE);
+	} else if (event == KEY_KBDILLUMTOGGLE) {
 		// Keyboard LED change
 		enum led_brightness value = kb_led_get(&data->kb_led);
 		led_classdev_notify_brightness_hw_changed(&data->kb_led, value);
@@ -114,6 +123,20 @@ static int system76_add(struct acpi_device *acpi_dev) {
 	}
 	acpi_dev->driver_data = data;
 	data->acpi_dev = acpi_dev;
+
+	data->input_dev = devm_input_allocate_device(&acpi_dev->dev);
+	if (!data->input_dev) {
+		return -ENOMEM;
+	}
+	data->input_dev->name = "System76 Coreboot ACPI Input";
+	data->input_dev->phys = "system76/input0";
+	data->input_dev->id.bustype = BUS_HOST;
+	set_bit(EV_KEY, data->input_dev->evbit);
+	set_bit(KEY_TOUCHPAD_TOGGLE, data->input_dev->keybit);
+	err = input_register_device(data->input_dev);
+	if (err) {
+		return err;
+	}
 
 	data->ap_led.name = "system76::airplane";
 	data->ap_led.flags = LED_CORE_SUSPENDRESUME;
@@ -141,6 +164,9 @@ static int system76_add(struct acpi_device *acpi_dev) {
 
 static int system76_remove(struct acpi_device *acpi_dev) {
 	struct system76_data *data = acpi_driver_data(acpi_dev);
+
+	input_unregister_device(data->input_dev);
+	data->input_dev = NULL;
 
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->ap_led);
 
