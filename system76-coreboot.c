@@ -105,9 +105,7 @@ static void system76_key(struct system76_data * data, unsigned int code) {
 static void system76_notify(struct acpi_device *acpi_dev, u32 event) {
 	struct system76_data * data = acpi_driver_data(acpi_dev);
 
-	if (event == KEY_TOUCHPAD_TOGGLE) {
-		system76_key(data, KEY_TOUCHPAD_TOGGLE);
-	} else if (event == KEY_KBDILLUMTOGGLE) {
+	if (event == 0x80) {
 		// Keyboard LED change
 		enum led_brightness value = kb_led_get(&data->kb_led);
 		led_classdev_notify_brightness_hw_changed(&data->kb_led, value);
