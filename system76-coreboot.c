@@ -20,6 +20,9 @@ struct system76_data {
 	struct acpi_device * acpi_dev;
 	struct led_classdev ap_led;
 	struct led_classdev kb_led;
+	enum led_brightness kb_brightness;
+	enum led_brightness kb_toggle_brightness;
+	int kb_color;
 };
 
 static const struct acpi_device_id device_ids[] = {
@@ -27,6 +30,25 @@ static const struct acpi_device_id device_ids[] = {
 	{"", 0},
 };
 MODULE_DEVICE_TABLE(acpi, device_ids);
+
+static const enum led_brightness kb_levels[] = {
+	48,
+	72,
+	96,
+	144,
+	192,
+	255
+};
+
+static const int kb_colors[] = {
+	0xFFFFFF,
+	0x0000FF,
+	0xFF0000,
+	0xFF00FF,
+	0x00FF00,
+	0x00FFFF,
+	0xFFFF00
+};
 
 static int system76_get(struct system76_data * data, char * method) {
 	acpi_handle handle = acpi_device_handle(data->acpi_dev);
@@ -79,27 +101,82 @@ static void ap_led_set(struct led_classdev * led, enum led_brightness value) {
 static enum led_brightness kb_led_get(struct led_classdev * led) {
 	struct system76_data * data = container_of(led, struct system76_data, kb_led);
 
-	int value = system76_get(data, "GKBL");
-	if (value > 0) {
-		return (enum led_brightness)value;
-	} else {
-		return LED_OFF;
-	}
+	return data->kb_brightness;
 }
 
 static void kb_led_set(struct led_classdev * led, enum led_brightness value) {
 	struct system76_data * data = container_of(led, struct system76_data, kb_led);
 
-	system76_set(data, "SKBL", (int)value);
+	data->kb_brightness = value;
+	system76_set(data, "SKBL", (int)data->kb_brightness);
 }
 
 static void system76_notify(struct acpi_device *acpi_dev, u32 event) {
+	int i;
 	struct system76_data * data = acpi_driver_data(acpi_dev);
 
 	if (event == 0x80) {
 		// Keyboard LED change
-		enum led_brightness value = kb_led_get(&data->kb_led);
-		led_classdev_notify_brightness_hw_changed(&data->kb_led, value);
+		int value = system76_get(data, "GKBL");
+		if (value >= 0) {
+			data->kb_brightness = value;
+			led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
+		}
+	} else if (event == 0x81) {
+		// Backlight toggle
+		if (data->kb_brightness > 0) {
+			data->kb_toggle_brightness = data->kb_brightness;
+			kb_led_set(&data->kb_led, 0);
+		} else {
+			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+		}
+		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
+	} else if (event == 0x82) {
+		// Backlight down
+		if (data->kb_brightness > 0) {
+			for (i = sizeof(kb_levels)/sizeof(enum led_brightness); i > 0; i--) {
+				if (kb_levels[i - 1] < data->kb_brightness) {
+					kb_led_set(&data->kb_led, kb_levels[i - 1]);
+					break;
+				}
+			}
+		} else {
+			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+		}
+		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
+	} else if (event == 0x83) {
+		// Backlight up
+		if (data->kb_brightness > 0) {
+			for (i = 0; i < sizeof(kb_levels)/sizeof(enum led_brightness); i++) {
+				if (kb_levels[i] > data->kb_brightness) {
+					kb_led_set(&data->kb_led, kb_levels[i]);
+					break;
+				}
+			}
+		} else {
+			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+		}
+		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
+	} else if (event == 0x84) {
+		// Backlight color
+		if (data->kb_color >= 0) {
+			if (data->kb_brightness > 0) {
+				for (i = 0; i < sizeof(kb_colors)/sizeof(int); i++) {
+					if (kb_colors[i] == data->kb_color) {
+						break;
+					}
+				}
+				i += 1;
+				if (i >= sizeof(kb_colors)/sizeof(int)) {
+					i = 0;
+				}
+				data->kb_color = kb_colors[i];
+				system76_set(data, "SKBC", data->kb_color);
+			} else {
+				kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+			}
+			led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
+		}
 	}
 }
 
@@ -128,7 +205,15 @@ static int system76_add(struct acpi_device *acpi_dev) {
 	data->kb_led.flags = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
 	data->kb_led.brightness_get = kb_led_get;
 	data->kb_led.brightness_set = kb_led_set;
-	data->kb_led.max_brightness = 5;
+	if (acpi_has_method(acpi_device_handle(data->acpi_dev), "SKBC")) {
+		data->kb_led.max_brightness = 255;
+		data->kb_toggle_brightness = 72;
+		data->kb_color = 0xffffff;
+		system76_set(data, "SKBC", data->kb_color);
+	} else {
+		data->kb_led.max_brightness = 5;
+		data->kb_color = -1;
+	}
 	err = devm_led_classdev_register(&acpi_dev->dev, &data->kb_led);
 	if (err) {
 		return err;
