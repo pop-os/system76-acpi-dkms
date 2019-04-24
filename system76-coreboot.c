@@ -270,8 +270,12 @@ static int system76_add(struct acpi_device *acpi_dev) {
 	if (lpc_cmd(&lpc, 0xA8, 1000000)) {
 		u8 data = 0;
 		if (lpc_read(&lpc, &data, 1000000)) {
-			printk("system76 ec devices: 0x%x\n", data);
+			printk("system76-coreboot: EC devices: 0x%x\n", data);
+		} else {
+			printk("system76-coreboot: failed to read EC devices\n");
 		}
+	} else {
+		printk("system76-coreboot: failed to probe EC devices\n");
 	}
 
 	return 0;
