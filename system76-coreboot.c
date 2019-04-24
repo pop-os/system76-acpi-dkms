@@ -111,6 +111,44 @@ static void kb_led_set(struct led_classdev * led, enum led_brightness value) {
 	system76_set(data, "SKBL", (int)data->kb_brightness);
 }
 
+static ssize_t kb_led_color_show(struct device * dev, char *buf) {
+	struct led_clasdev * led = container_of(dev, struct led_classdev, dev);
+	struct system76_data * data = container_of(led, struct system76_data, kb_led);
+
+	return sprintf(buf, "%06X\n", data->kb_color);
+}
+
+static ssize_t kb_led_color_store(struct device * dev, const char *buf, size_t size) {
+	unsigned int val;
+	int ret;
+
+	struct led_clasdev * led = container_of(dev, struct led_classdev, dev);
+	struct system76_data * data = container_of(led, struct system76_data, kb_led);
+
+	ret = kstrtouint(buf, 16, &val);
+	if (ret) {
+		return ret;
+	}
+
+	if val > 0xFFFFFF {
+		return -EINVAL;
+	}
+
+	data->kb_color = (int)val;
+	system76_set(data, "SKBC", data->kb_color);
+
+	return size;
+}
+
+static const struct device_attribute kb_led_color_extra_dev_attr = {
+	.attr = {
+		.name = "color",
+		.mode = 0644,
+	},
+	.show = kb_led_color_show,
+	.store = kb_led_color_store,
+};
+
 static void system76_notify(struct acpi_device *acpi_dev, u32 event) {
 	int i;
 	struct system76_data * data = acpi_driver_data(acpi_dev);
@@ -218,12 +256,20 @@ static int system76_add(struct acpi_device *acpi_dev) {
 	if (err) {
 		return err;
 	}
+	err = device_create_file(data->kb_led.dev, &kb_led_color_dev_attr);
+	if (err) {
+		return err;
+	}
 
 	return 0;
 }
 
 static int system76_remove(struct acpi_device *acpi_dev) {
 	struct system76_data *data = acpi_driver_data(acpi_dev);
+
+	if (data->kb_color >= 0) {
+		device_remove_file(kb_led.dev, &kb_led_color_dev_attr);
+	}
 
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->ap_led);
 
