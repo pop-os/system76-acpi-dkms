@@ -16,8 +16,6 @@
 #include <linux/pci_ids.h>
 #include <linux/types.h>
 
-#include "lpc.c"
-
 struct system76_data {
 	struct acpi_device * acpi_dev;
 	struct led_classdev ap_led;
@@ -265,17 +263,13 @@ static int system76_add(struct acpi_device *acpi_dev) {
 		}
 	}
 
-	// Enable camera toggle
-	struct Lpc lpc = lpc_new();
-	if (lpc_cmd(&lpc, 0xA8, 1000000)) {
-		u8 data = 0;
-		if (lpc_read(&lpc, &data, 1000000)) {
-			printk("system76-coreboot: EC devices: 0x%x\n", data);
-		} else {
-			printk("system76-coreboot: failed to read EC devices\n");
-		}
+	// Probe EC devices
+	u8 d = 0;
+	err = ec_transaction(0xA8, NULL, 0, &d, 1);
+	if(err) {
+		printk("system76-coreboot: failed to probe EC devices: %d\n", err);
 	} else {
-		printk("system76-coreboot: failed to probe EC devices\n");
+		printk("system76-coreboot: EC devices: 0x%x\n", d);
 	}
 
 	return 0;
