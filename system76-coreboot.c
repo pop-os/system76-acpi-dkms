@@ -16,6 +16,8 @@
 #include <linux/pci_ids.h>
 #include <linux/types.h>
 
+#include "lpc.c"
+
 struct system76_data {
 	struct acpi_device * acpi_dev;
 	struct led_classdev ap_led;
@@ -111,18 +113,18 @@ static void kb_led_set(struct led_classdev * led, enum led_brightness value) {
 	system76_set(data, "SKBL", (int)data->kb_brightness);
 }
 
-static ssize_t kb_led_color_show(struct device * dev, char *buf) {
-	struct led_clasdev * led = container_of(dev, struct led_classdev, dev);
+static ssize_t kb_led_color_show(struct device * dev, struct device_attribute * dev_attr, char *buf) {
+	struct led_classdev * led = (struct led_classdev *)dev->driver_data;
 	struct system76_data * data = container_of(led, struct system76_data, kb_led);
 
 	return sprintf(buf, "%06X\n", data->kb_color);
 }
 
-static ssize_t kb_led_color_store(struct device * dev, const char *buf, size_t size) {
+static ssize_t kb_led_color_store(struct device * dev, struct device_attribute * dev_attr, const char *buf, size_t size) {
 	unsigned int val;
 	int ret;
 
-	struct led_clasdev * led = container_of(dev, struct led_classdev, dev);
+	struct led_classdev * led = (struct led_classdev *)dev->driver_data;
 	struct system76_data * data = container_of(led, struct system76_data, kb_led);
 
 	ret = kstrtouint(buf, 16, &val);
@@ -130,7 +132,7 @@ static ssize_t kb_led_color_store(struct device * dev, const char *buf, size_t s
 		return ret;
 	}
 
-	if val > 0xFFFFFF {
+	if (val > 0xFFFFFF) {
 		return -EINVAL;
 	}
 
@@ -140,7 +142,7 @@ static ssize_t kb_led_color_store(struct device * dev, const char *buf, size_t s
 	return size;
 }
 
-static const struct device_attribute kb_led_color_extra_dev_attr = {
+static const struct device_attribute kb_led_color_dev_attr = {
 	.attr = {
 		.name = "color",
 		.mode = 0644,
@@ -256,9 +258,20 @@ static int system76_add(struct acpi_device *acpi_dev) {
 	if (err) {
 		return err;
 	}
-	err = device_create_file(data->kb_led.dev, &kb_led_color_dev_attr);
-	if (err) {
-		return err;
+	if (data->kb_color >= 0) {
+		err = device_create_file(data->kb_led.dev, &kb_led_color_dev_attr);
+		if (err) {
+			return err;
+		}
+	}
+
+	// Enable camera toggle
+	struct Lpc lpc = lpc_new();
+	if (lpc_cmd(&lpc, 0xA8, 1000000)) {
+		u8 data = 0;
+		if (lpc_read(&lpc, &data, 1000000)) {
+			printk("system76 ec devices: 0x%x\n", data);
+		}
 	}
 
 	return 0;
@@ -268,7 +281,7 @@ static int system76_remove(struct acpi_device *acpi_dev) {
 	struct system76_data *data = acpi_driver_data(acpi_dev);
 
 	if (data->kb_color >= 0) {
-		device_remove_file(kb_led.dev, &kb_led_color_dev_attr);
+		device_remove_file(data->kb_led.dev, &kb_led_color_dev_attr);
 	}
 
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->ap_led);
