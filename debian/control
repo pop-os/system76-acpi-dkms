@@ -1,4 +1,4 @@
-Source: system76-coreboot-dkms
+Source: system76-acpi-dkms
 Section: kernel
 Priority: optional
 Maintainer: Jeremy Soller <jeremy@system76.com>
@@ -6,11 +6,10 @@ Build-Depends:
   debhelper (>=9),
   dkms
 Standards-Version: 4.1.1
-Homepage: https://github.com/pop-os/system76-coreboot-dkms
+Homepage: https://github.com/pop-os/system76-acpi-dkms
 
-Package: system76-coreboot-dkms
+Package: system76-acpi-dkms
 Architecture: amd64
 Depends: ${misc:Depends}
-Description: System76 Coreboot DKMS driver
- This DKMS driver provides airplane mode, keyboard backlight, and fan support
- for System76 laptops running coreboot
+Description: System76 ACPI Driver (DKMS)
+ This provides the system76_acpi in-tree driver for systems missing it.

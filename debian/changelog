@@ -1,4 +1,4 @@
-system76-coreboot-dkms (1.0.0) bionic; urgency=medium
+system76-acpi-dkms (1.0.0) bionic; urgency=medium
 
   * Initial release
 
