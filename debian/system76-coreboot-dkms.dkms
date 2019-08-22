@@ -1,5 +1,5 @@
-PACKAGE_NAME="system76-coreboot"
+PACKAGE_NAME="system76_acpi"
 PACKAGE_VERSION="#MODULE_VERSION#"
-BUILT_MODULE_NAME[0]="system76-coreboot"
+BUILT_MODULE_NAME[0]="system76_acpi"
 DEST_MODULE_LOCATION[0]="/updates/dkms"
 AUTOINSTALL="yes"

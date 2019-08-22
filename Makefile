@@ -1,4 +1,4 @@
-obj-m := system76-coreboot.o
+obj-m := system76_acpi.o
 KERNEL_DIR = /lib/modules/$(shell uname -r)/build
 
 all:

@@ -46,4 +46,4 @@ copy_modules_dir_filter()
     done
 }
 
-copy_modules_dir_filter updates/dkms system76-coreboot
+copy_modules_dir_filter updates/dkms system76_acpi
