@@ -32,6 +32,7 @@ static const struct acpi_device_id device_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, device_ids);
 
+// Array of keyboard LED brightness levels
 static const enum led_brightness kb_levels[] = {
 	48,
 	72,
@@ -41,6 +42,7 @@ static const enum led_brightness kb_levels[] = {
 	255
 };
 
+// Array of keyboard LED colors in 24-bit RGB format
 static const int kb_colors[] = {
 	0xFFFFFF,
 	0x0000FF,
@@ -51,93 +53,116 @@ static const int kb_colors[] = {
 	0xFFFF00
 };
 
+// Get a System76 ACPI device value by name
 static int system76_get(struct system76_data *data, char *method)
 {
-	acpi_handle handle = acpi_device_handle(data->acpi_dev);
+	acpi_handle handle;
+	acpi_status status;
 	unsigned long long ret = 0;
-	acpi_status status = acpi_evaluate_integer(handle, method, NULL, &ret);
+
+	handle = acpi_device_handle(data->acpi_dev);
+	status = acpi_evaluate_integer(handle, method, NULL, &ret);
 	if (ACPI_SUCCESS(status))
 		return (int)ret;
 	else
 		return -1;
 }
 
+// Set a System76 ACPI device value by name
 static int system76_set(struct system76_data *data, char *method, int value)
 {
-	acpi_handle handle = acpi_device_handle(data->acpi_dev);
-
 	union acpi_object obj;
+	struct acpi_object_list obj_list;
+	acpi_handle handle;
+	acpi_status status;
+
 	obj.type = ACPI_TYPE_INTEGER;
 	obj.integer.value = value;
-
-	struct acpi_object_list obj_list;
 	obj_list.count = 1;
 	obj_list.pointer = &obj;
-
-	acpi_status status = acpi_evaluate_object(handle, method, &obj_list, NULL);
-
+	handle = acpi_device_handle(data->acpi_dev);
+	status = acpi_evaluate_object(handle, method, &obj_list, NULL);
 	if (ACPI_SUCCESS(status))
 		return 0;
 	else
 		return -1;
 }
 
+// Get the airplane mode LED brightness
 static enum led_brightness ap_led_get(struct led_classdev *led)
 {
-	struct system76_data *data = container_of(led, struct system76_data, ap_led);
+	struct system76_data *data;
+	int value;
 
-	int value = system76_get(data, "GAPL");
-
+	data = container_of(led, struct system76_data, ap_led);
+	value = system76_get(data, "GAPL");
 	if (value > 0)
 		return (enum led_brightness)value;
 	else
 		return LED_OFF;
 }
 
+// Set the airplane mode LED brightness
 static void ap_led_set(struct led_classdev *led, enum led_brightness value)
 {
-	struct system76_data *data = container_of(led, struct system76_data, ap_led);
+	struct system76_data *data;
 
+	data = container_of(led, struct system76_data, ap_led);
 	system76_set(data, "SAPL", value == LED_OFF ? 0 : 1);
 }
 
+// Get the last set keyboard LED brightness
 static enum led_brightness kb_led_get(struct led_classdev *led)
 {
-	struct system76_data *data = container_of(led, struct system76_data, kb_led);
+	struct system76_data *data;
 
+	data = container_of(led, struct system76_data, kb_led);
 	return data->kb_brightness;
 }
 
+// Set the keyboard LED brightness
 static void kb_led_set(struct led_classdev *led, enum led_brightness value)
 {
-	struct system76_data *data = container_of(led, struct system76_data, kb_led);
+	struct system76_data *data;
 
+	data = container_of(led, struct system76_data, kb_led);
 	data->kb_brightness = value;
 	system76_set(data, "SKBL", (int)data->kb_brightness);
 }
 
-static ssize_t kb_led_color_show(struct device *dev, struct device_attribute *dev_attr, char *buf)
+// Get the last set keyboard LED color
+static ssize_t kb_led_color_show(
+	struct device *dev,
+	struct device_attribute *dev_attr,
+	char *buf)
 {
-	struct led_classdev *led = (struct led_classdev *)dev->driver_data;
-	struct system76_data *data = container_of(led, struct system76_data, kb_led);
+	struct led_classdev *led;
+	struct system76_data *data;
 
+	led = (struct led_classdev *)dev->driver_data;
+	data = container_of(led, struct system76_data, kb_led);
 	return sprintf(buf, "%06X\n", data->kb_color);
 }
 
-static ssize_t kb_led_color_store(struct device *dev, struct device_attribute *dev_attr, const char *buf, size_t size)
+// Set the keyboard LED color
+static ssize_t kb_led_color_store(
+	struct device *dev,
+	struct device_attribute *dev_attr,
+	const char *buf,
+	size_t size)
 {
+	struct led_classdev *led;
+	struct system76_data *data;
 	unsigned int val;
 	int ret;
 
-	struct led_classdev *led = (struct led_classdev *)dev->driver_data;
-	struct system76_data *data = container_of(led, struct system76_data, kb_led);
-
+	led = (struct led_classdev *)dev->driver_data;
+	data = container_of(led, struct system76_data, kb_led);
 	ret = kstrtouint(buf, 16, &val);
 	if (ret)
 		return ret;
 	if (val > 0xFFFFFF)
 		return -EINVAL;
-
 	data->kb_color = (int)val;
 	system76_set(data, "SKBC", data->kb_color);
 
@@ -153,80 +178,130 @@ static const struct device_attribute kb_led_color_dev_attr = {
 	.store = kb_led_color_store,
 };
 
-static void system76_notify(struct acpi_device *acpi_dev, u32 event)
+// Notify that the keyboard LED was changed by hardware
+static void kb_led_notify(struct system76_data *data)
+{
+	led_classdev_notify_brightness_hw_changed(
+		&data->kb_led,
+		data->kb_brightness
+	);
+}
+
+// Read keyboard LED brightness as set by hardware
+static void kb_led_hotkey_hardware(struct system76_data *data)
+{
+	int value;
+
+	value = system76_get(data, "GKBL");
+	if (value < 0)
+		return;
+	data->kb_brightness = value;
+	kb_led_notify(data);
+}
+
+// Toggle the keyboard LED
+static void kb_led_hotkey_toggle(struct system76_data *data)
+{
+	if (data->kb_brightness > 0) {
+		data->kb_toggle_brightness = data->kb_brightness;
+		kb_led_set(&data->kb_led, 0);
+	} else {
+		kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+	}
+	kb_led_notify(data);
+}
+
+// Decrease the keyboard LED brightness
+static void kb_led_hotkey_down(struct system76_data *data)
 {
 	int i;
-	struct system76_data *data = acpi_driver_data(acpi_dev);
 
-	if (event == 0x80) {
-		// Keyboard LED change
-		int value = system76_get(data, "GKBL");
+	if (data->kb_brightness > 0) {
+		for (i = ARRAY_SIZE(kb_levels); i > 0; i--) {
+			if (kb_levels[i - 1] < data->kb_brightness) {
+				kb_led_set(&data->kb_led, kb_levels[i - 1]);
+				break;
+			}
+		}
+	} else {
+		kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+	}
+	kb_led_notify(data);
+}
 
-		if (value >= 0) {
-			data->kb_brightness = value;
-			led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
-		}
-	} else if (event == 0x81) {
-		// Backlight toggle
-		if (data->kb_brightness > 0) {
-			data->kb_toggle_brightness = data->kb_brightness;
-			kb_led_set(&data->kb_led, 0);
-		} else {
-			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
-		}
-		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
-	} else if (event == 0x82) {
-		// Backlight down
-		if (data->kb_brightness > 0) {
-			for (i = sizeof(kb_levels)/sizeof(enum led_brightness); i > 0; i--) {
-				if (kb_levels[i - 1] < data->kb_brightness) {
-					kb_led_set(&data->kb_led, kb_levels[i - 1]);
-					break;
-				}
+// Increase the keyboard LED brightness
+static void kb_led_hotkey_up(struct system76_data *data)
+{
+	int i;
+
+	if (data->kb_brightness > 0) {
+		for (i = 0; i < ARRAY_SIZE(kb_levels); i++) {
+			if (kb_levels[i] > data->kb_brightness) {
+				kb_led_set(&data->kb_led, kb_levels[i]);
+				break;
 			}
-		} else {
-			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
 		}
-		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
-	} else if (event == 0x83) {
-		// Backlight up
-		if (data->kb_brightness > 0) {
-			for (i = 0; i < sizeof(kb_levels)/sizeof(enum led_brightness); i++) {
-				if (kb_levels[i] > data->kb_brightness) {
-					kb_led_set(&data->kb_led, kb_levels[i]);
-					break;
-				}
-			}
-		} else {
-			kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+	} else {
+		kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+	}
+	kb_led_notify(data);
+}
+
+// Cycle the keyboard LED color
+static void kb_led_hotkey_color(struct system76_data *data)
+{
+	int i;
+
+	if (data->kb_color < 0)
+		return;
+	if (data->kb_brightness > 0) {
+		for (i = 0; i < ARRAY_SIZE(kb_colors); i++) {
+			if (kb_colors[i] == data->kb_color)
+				break;
 		}
-		led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
-	} else if (event == 0x84) {
-		// Backlight color
-		if (data->kb_color >= 0) {
-			if (data->kb_brightness > 0) {
-				for (i = 0; i < sizeof(kb_colors)/sizeof(int); i++) {
-					if (kb_colors[i] == data->kb_color)
-						break;
-				}
-				i += 1;
-				if (i >= sizeof(kb_colors)/sizeof(int))
-					i = 0;
-				data->kb_color = kb_colors[i];
-				system76_set(data, "SKBC", data->kb_color);
-			} else {
-				kb_led_set(&data->kb_led, data->kb_toggle_brightness);
-			}
-			led_classdev_notify_brightness_hw_changed(&data->kb_led, data->kb_brightness);
-		}
+		i += 1;
+		if (i >= ARRAY_SIZE(kb_colors))
+			i = 0;
+		data->kb_color = kb_colors[i];
+		system76_set(data, "SKBC", data->kb_color);
+	} else {
+		kb_led_set(&data->kb_led, data->kb_toggle_brightness);
+	}
+	kb_led_notify(data);
+}
+
+// Handle ACPI notification
+static void system76_notify(struct acpi_device *acpi_dev, u32 event)
+{
+	struct system76_data *data;
+
+	data = acpi_driver_data(acpi_dev);
+	switch (event) {
+	case 0x80:
+		kb_led_hotkey_hardware(data);
+		break;
+	case 0x81:
+		kb_led_hotkey_toggle(data);
+		break;
+	case 0x82:
+		kb_led_hotkey_down(data);
+		break;
+	case 0x83:
+		kb_led_hotkey_up(data);
+		break;
+	case 0x84:
+		kb_led_hotkey_color(data);
+		break;
 	}
 }
 
+// Add a System76 ACPI device
 static int system76_add(struct acpi_device *acpi_dev)
 {
+	struct system76_data *data;
 	int err;
 
-	struct system76_data *data = devm_kzalloc(&acpi_dev->dev, sizeof(*data), GFP_KERNEL);
+	data = devm_kzalloc(&acpi_dev->dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 	acpi_dev->driver_data = data;
@@ -263,7 +338,10 @@ static int system76_add(struct acpi_device *acpi_dev)
 		return err;
 
 	if (data->kb_color >= 0) {
-		err = device_create_file(data->kb_led.dev, &kb_led_color_dev_attr);
+		err = device_create_file(
+			data->kb_led.dev,
+			&kb_led_color_dev_attr
+		);
 		if (err)
 			return err;
 	}
@@ -271,10 +349,12 @@ static int system76_add(struct acpi_device *acpi_dev)
 	return 0;
 }
 
+// Remove a System76 ACPI device
 static int system76_remove(struct acpi_device *acpi_dev)
 {
-	struct system76_data *data = acpi_driver_data(acpi_dev);
+	struct system76_data *data;
 
+	data = acpi_driver_data(acpi_dev);
 	if (data->kb_color >= 0)
 		device_remove_file(data->kb_led.dev, &kb_led_color_dev_attr);
 
