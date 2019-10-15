@@ -1,3 +1,9 @@
+system76-acpi-dkms (1.0.1) bionic; urgency=medium
+
+  * Update to match upstream patch
+
+ -- Jeremy Soller <jeremy@system76.com>  Tue, 15 Oct 2019 14:16:31 -0600
+
 system76-acpi-dkms (1.0.0) bionic; urgency=medium
 
   * Initial release
