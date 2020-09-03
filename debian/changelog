@@ -1,3 +1,10 @@
+system76-acpi-dkms (1.0.2) focal; urgency=medium
+
+  * Add hwmon interface
+  * Add input interface
+
+ -- Jeremy Soller <jeremy@system76.com>  Thu, 03 Sep 2020 11:23:25 -0600
+
 system76-acpi-dkms (1.0.1) bionic; urgency=medium
 
   * Update to match upstream patch
