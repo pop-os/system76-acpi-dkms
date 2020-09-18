@@ -18,7 +18,10 @@
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/pci_ids.h>
+#include <linux/power_supply.h>
 #include <linux/types.h>
+
+#include <acpi/battery.h>
 
 struct system76_data {
 	struct acpi_device *acpi_dev;
@@ -142,6 +145,161 @@ static int system76_set(struct system76_data *data, char *method, int value)
 	else
 		return -1;
 }
+
+/* Battery */
+
+#define BATTERY_THRESHOLD_INVALID       0xFF
+
+enum {
+	THRESHOLD_START,
+	THRESHOLD_END,
+};
+
+static ssize_t battery_get_threshold(int which, char *buf)
+{
+	struct acpi_object_list input;
+	union acpi_object param;
+	acpi_handle handle;
+	acpi_status status;
+	unsigned long long ret = BATTERY_THRESHOLD_INVALID;
+
+	handle = ec_get_handle();
+	if (!handle)
+		return -ENODEV;
+
+	input.count = 1;
+	input.pointer = &param;
+	// Start/stop selection
+	param.type = ACPI_TYPE_INTEGER;
+	param.integer.value = which;
+
+	status = acpi_evaluate_integer(handle, "GBCT", &input, &ret);
+	if (ACPI_FAILURE(status))
+		return -EIO;
+	if (ret == BATTERY_THRESHOLD_INVALID)
+		return -EINVAL;
+
+	return sprintf(buf, "%d\n", (int)ret);
+}
+
+static ssize_t battery_set_threshold(int which, const char *buf, size_t count)
+{
+	struct acpi_object_list input;
+	union acpi_object params[2];
+	acpi_handle handle;
+	acpi_status status;
+	unsigned int value;
+	int ret;
+
+	handle = ec_get_handle();
+	if (!handle)
+		return -ENODEV;
+
+	ret = kstrtouint(buf, 10, &value);
+	if (ret)
+		return ret;
+
+	if (value > 100)
+		return -EINVAL;
+
+	input.count = 2;
+	input.pointer = params;
+	// Start/stop selection
+	params[0].type = ACPI_TYPE_INTEGER;
+	params[0].integer.value = which;
+	// Threshold value
+	params[1].type = ACPI_TYPE_INTEGER;
+	params[1].integer.value = value;
+
+	status = acpi_evaluate_object(handle, "SBCT", &input, NULL);
+	if (ACPI_FAILURE(status))
+		return -EIO;
+
+	return count;
+}
+
+static ssize_t charge_control_start_threshold_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	return battery_get_threshold(THRESHOLD_START, buf);
+}
+
+static ssize_t charge_control_start_threshold_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	return battery_set_threshold(THRESHOLD_START, buf, count);
+}
+
+static DEVICE_ATTR_RW(charge_control_start_threshold);
+
+static ssize_t charge_control_end_threshold_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	return battery_get_threshold(THRESHOLD_END, buf);
+}
+
+static ssize_t charge_control_end_threshold_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	return battery_set_threshold(THRESHOLD_END, buf, count);
+}
+
+static DEVICE_ATTR_RW(charge_control_end_threshold);
+
+static int system76_battery_add(struct power_supply *battery)
+{
+	// System76 EC only supports 1 battery
+	if (strcmp(battery->desc->name, "BAT0") != 0)
+		return -ENODEV;
+
+	device_create_file(&battery->dev, &dev_attr_charge_control_start_threshold);
+	device_create_file(&battery->dev, &dev_attr_charge_control_end_threshold);
+
+	return 0;
+}
+
+static int system76_battery_remove(struct power_supply *battery)
+{
+	device_remove_file(&battery->dev, &dev_attr_charge_control_start_threshold);
+	device_remove_file(&battery->dev, &dev_attr_charge_control_end_threshold);
+	return 0;
+}
+
+static struct acpi_battery_hook system76_battery_hook = {
+	.add_battery = system76_battery_add,
+	.remove_battery = system76_battery_remove,
+	.name = "System76 Battery Extension",
+};
+
+static void system76_battery_init(void)
+{
+	acpi_handle handle;
+
+	handle = ec_get_handle();
+	if (handle && acpi_has_method(handle, "GBCT"))
+		battery_hook_register(&system76_battery_hook);
+}
+
+static void system76_battery_exit(void)
+{
+	acpi_handle handle;
+
+	handle = ec_get_handle();
+	if (handle && acpi_has_method(handle, "GBCT"))
+		battery_hook_unregister(&system76_battery_hook);
+}
+
+/* Keyboard */
 
 // Get the airplane mode LED brightness
 static enum led_brightness ap_led_get(struct led_classdev *led)
@@ -325,6 +483,8 @@ static void kb_led_hotkey_color(struct system76_data *data)
 	kb_led_notify(data);
 }
 
+/* hwmon */
+
 static umode_t thermal_is_visible(const void *drvdata, enum hwmon_sensor_types type, u32 attr, int channel) {
 	const struct system76_data *data = drvdata;
 
@@ -423,6 +583,8 @@ static const struct hwmon_chip_info thermal_chip_info = {
 	.ops = &thermal_ops,
 	.info = thermal_channel_info,
 };
+
+/* ACPI driver */
 
 static void input_key(struct system76_data *data, unsigned int code) {
 	input_report_key(data->input, code, 1);
@@ -532,6 +694,8 @@ static int system76_add(struct acpi_device *acpi_dev)
 		return err;
 	}
 
+	system76_battery_init();
+
 	return 0;
 }
 
@@ -541,6 +705,9 @@ static int system76_remove(struct acpi_device *acpi_dev)
 	struct system76_data *data;
 
 	data = acpi_driver_data(acpi_dev);
+
+	system76_battery_exit();
+
 	if (data->kb_color >= 0)
 		device_remove_file(data->kb_led.dev, &kb_led_color_dev_attr);
 
