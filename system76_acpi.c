@@ -357,7 +357,11 @@ static ssize_t kb_led_color_show(
 
 	led = (struct led_classdev *)dev->driver_data;
 	data = container_of(led, struct system76_data, kb_led);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	return sysfs_emit(buf, "%06X\n", data->kb_color);
+#else
 	return sprintf(buf, "%06X\n", data->kb_color);
+#endif
 }
 
 // Set the keyboard LED color
@@ -385,7 +389,7 @@ static ssize_t kb_led_color_store(
 	return size;
 }
 
-static const struct device_attribute kb_led_color_dev_attr = {
+static struct device_attribute dev_attr_kb_led_color = {
 	.attr = {
 		.name = "color",
 		.mode = 0644,
@@ -393,6 +397,13 @@ static const struct device_attribute kb_led_color_dev_attr = {
 	.show = kb_led_color_show,
 	.store = kb_led_color_store,
 };
+
+static struct attribute *system76_kb_led_color_attrs[] = {
+	&dev_attr_kb_led_color.attr,
+	NULL,
+};
+
+ATTRIBUTE_GROUPS(system76_kb_led_color);
 
 // Notify that the keyboard LED was changed by hardware
 static void kb_led_notify(struct system76_data *data)
@@ -698,6 +709,7 @@ static int system76_add(struct acpi_device *acpi_dev)
 	data->kb_led.brightness_set_blocking = kb_led_set;
 	if (acpi_has_method(acpi_device_handle(data->acpi_dev), "SKBC")) {
 		data->kb_led.max_brightness = 255;
+		data->kb_led.groups = system76_kb_led_color_groups;
 		data->kb_toggle_brightness = 72;
 		data->kb_color = 0xffffff;
 		system76_set(data, "SKBC", data->kb_color);
@@ -708,15 +720,6 @@ static int system76_add(struct acpi_device *acpi_dev)
 	err = devm_led_classdev_register(&acpi_dev->dev, &data->kb_led);
 	if (err)
 		return err;
-
-	if (data->kb_color >= 0) {
-		err = device_create_file(
-			data->kb_led.dev,
-			&kb_led_color_dev_attr
-		);
-		if (err)
-			return err;
-	}
 
 	data->input = devm_input_allocate_device(&acpi_dev->dev);
 	if (!data->input)
@@ -765,9 +768,6 @@ static int system76_remove(struct acpi_device *acpi_dev)
 	data = acpi_driver_data(acpi_dev);
 
 	system76_battery_exit();
-
-	if (data->kb_color >= 0)
-		device_remove_file(data->kb_led.dev, &kb_led_color_dev_attr);
 
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->ap_led);
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->kb_led);
