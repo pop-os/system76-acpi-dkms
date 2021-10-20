@@ -19,7 +19,9 @@
 #include <linux/module.h>
 #include <linux/pci_ids.h>
 #include <linux/power_supply.h>
+#include <linux/sysfs.h>
 #include <linux/types.h>
+#include <linux/version.h>
 
 #include <acpi/battery.h>
 
@@ -73,9 +75,8 @@ static int system76_get(struct system76_data *data, char *method)
 	handle = acpi_device_handle(data->acpi_dev);
 	status = acpi_evaluate_integer(handle, method, NULL, &ret);
 	if (ACPI_SUCCESS(status))
-		return (int)ret;
-	else
-		return -1;
+		return ret;
+	return -ENODEV;
 }
 
 // Get a System76 ACPI device value by name with index
@@ -91,12 +92,12 @@ static int system76_get_index(struct system76_data *data, char *method, int inde
 	obj.integer.value = index;
 	obj_list.count = 1;
 	obj_list.pointer = &obj;
+
 	handle = acpi_device_handle(data->acpi_dev);
 	status = acpi_evaluate_integer(handle, method, &obj_list, &ret);
 	if (ACPI_SUCCESS(status))
-		return (int)ret;
-	else
-		return -1;
+		return ret;
+	return -ENODEV;
 }
 
 // Get a System76 ACPI device object by name
@@ -109,20 +110,21 @@ static int system76_get_object(struct system76_data *data, char *method, union a
 	handle = acpi_device_handle(data->acpi_dev);
 	status = acpi_evaluate_object(handle, method, NULL, &buf);
 	if (ACPI_SUCCESS(status)) {
-		*obj = (union acpi_object *)buf.pointer;
+		*obj = buf.pointer;
 		return 0;
-	} else {
-		return -1;
 	}
+
+	return -ENODEV;
 }
 
 // Get a name from a System76 ACPI device object
-static char * system76_name(union acpi_object *obj, int index) {
+static char *system76_name(union acpi_object *obj, int index)
+{
 	if (obj && obj->type == ACPI_TYPE_PACKAGE && index <= obj->package.count) {
-		if (obj->package.elements[index].type == ACPI_TYPE_STRING) {
+		if (obj->package.elements[index].type == ACPI_TYPE_STRING)
 			return obj->package.elements[index].string.pointer;
-		}
 	}
+
 	return NULL;
 }
 
@@ -148,7 +150,7 @@ static int system76_set(struct system76_data *data, char *method, int value)
 
 /* Battery */
 
-#define BATTERY_THRESHOLD_INVALID       0xFF
+#define BATTERY_THRESHOLD_INVALID	0xFF
 
 enum {
 	THRESHOLD_START,
@@ -179,7 +181,11 @@ static ssize_t battery_get_threshold(int which, char *buf)
 	if (ret == BATTERY_THRESHOLD_INVALID)
 		return -EINVAL;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+	return sysfs_emit(buf, "%d\n", (int)ret);
+#else
 	return sprintf(buf, "%d\n", (int)ret);
+#endif
 }
 
 static ssize_t battery_set_threshold(int which, const char *buf, size_t count)
@@ -218,43 +224,41 @@ static ssize_t battery_set_threshold(int which, const char *buf, size_t count)
 	return count;
 }
 
-static ssize_t charge_control_start_threshold_show(
-	struct device *dev,
-	struct device_attribute *attr,
-	char *buf)
+static ssize_t charge_control_start_threshold_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
 {
 	return battery_get_threshold(THRESHOLD_START, buf);
 }
 
-static ssize_t charge_control_start_threshold_store(
-	struct device *dev,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
+static ssize_t charge_control_start_threshold_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	return battery_set_threshold(THRESHOLD_START, buf, count);
 }
 
 static DEVICE_ATTR_RW(charge_control_start_threshold);
 
-static ssize_t charge_control_end_threshold_show(
-	struct device *dev,
-	struct device_attribute *attr,
-	char *buf)
+static ssize_t charge_control_end_threshold_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
 {
 	return battery_get_threshold(THRESHOLD_END, buf);
 }
 
-static ssize_t charge_control_end_threshold_store(
-	struct device *dev,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
+static ssize_t charge_control_end_threshold_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
 {
 	return battery_set_threshold(THRESHOLD_END, buf, count);
 }
 
 static DEVICE_ATTR_RW(charge_control_end_threshold);
+
+static struct attribute *system76_battery_attrs[] = {
+	&dev_attr_charge_control_start_threshold.attr,
+	&dev_attr_charge_control_end_threshold.attr,
+	NULL,
+};
+
+ATTRIBUTE_GROUPS(system76_battery);
 
 static int system76_battery_add(struct power_supply *battery)
 {
@@ -262,16 +266,15 @@ static int system76_battery_add(struct power_supply *battery)
 	if (strcmp(battery->desc->name, "BAT0") != 0)
 		return -ENODEV;
 
-	device_create_file(&battery->dev, &dev_attr_charge_control_start_threshold);
-	device_create_file(&battery->dev, &dev_attr_charge_control_end_threshold);
+	if (device_add_groups(&battery->dev, system76_battery_groups))
+		return -ENODEV;
 
 	return 0;
 }
 
 static int system76_battery_remove(struct power_supply *battery)
 {
-	device_remove_file(&battery->dev, &dev_attr_charge_control_start_threshold);
-	device_remove_file(&battery->dev, &dev_attr_charge_control_end_threshold);
+	device_remove_groups(&battery->dev, system76_battery_groups);
 	return 0;
 }
 
@@ -485,60 +488,101 @@ static void kb_led_hotkey_color(struct system76_data *data)
 
 /* hwmon */
 
-static umode_t thermal_is_visible(const void *drvdata, enum hwmon_sensor_types type, u32 attr, int channel) {
+static umode_t thermal_is_visible(const void *drvdata, enum hwmon_sensor_types type,
+				  u32 attr, int channel)
+{
 	const struct system76_data *data = drvdata;
 
-	if (type == hwmon_fan || type == hwmon_pwm) {
-		if (system76_name(data->nfan, channel)) {
-			return S_IRUGO;
-		}
-	} else if (type == hwmon_temp) {
-		if (system76_name(data->ntmp, channel)) {
-			return S_IRUGO;
-		}
+	switch (type) {
+	case hwmon_fan:
+	case hwmon_pwm:
+		if (system76_name(data->nfan, channel))
+			return 0444;
+		break;
+
+	case hwmon_temp:
+		if (system76_name(data->ntmp, channel))
+			return 0444;
+		break;
+
+	default:
+		return 0;
 	}
+
 	return 0;
 }
 
-static int thermal_read(struct device *dev, enum hwmon_sensor_types type, u32 attr, int channel, long *val) {
+static int thermal_read(struct device *dev, enum hwmon_sensor_types type, u32 attr,
+			int channel, long *val)
+{
 	struct system76_data *data = dev_get_drvdata(dev);
 	int raw;
 
-	if (type == hwmon_fan && attr == hwmon_fan_input) {
-		raw = system76_get_index(data, "GFAN", channel);
-		if (raw >= 0) {
-			*val = (long)((raw >> 8) & 0xFFFF);
+	switch (type) {
+	case hwmon_fan:
+		if (attr == hwmon_fan_input) {
+			raw = system76_get_index(data, "GFAN", channel);
+			if (raw < 0)
+				return raw;
+			*val = (raw >> 8) & 0xFFFF;
 			return 0;
 		}
-	} else if (type == hwmon_pwm && attr == hwmon_pwm_input) {
-		raw = system76_get_index(data, "GFAN", channel);
-		if (raw >= 0) {
-			*val = (long)(raw & 0xFF);
+		break;
+
+	case hwmon_pwm:
+		if (attr == hwmon_pwm_input) {
+			raw = system76_get_index(data, "GFAN", channel);
+			if (raw < 0)
+				return raw;
+			*val = raw & 0xFF;
 			return 0;
 		}
-	} else if (type == hwmon_temp && attr == hwmon_temp_input) {
-		raw = system76_get_index(data, "GTMP", channel);
-		if (raw >= 0) {
-			*val = (long)(raw * 1000);
+		break;
+
+	case hwmon_temp:
+		if (attr == hwmon_temp_input) {
+			raw = system76_get_index(data, "GTMP", channel);
+			if (raw < 0)
+				return raw;
+			*val = raw * 1000;
 			return 0;
 		}
+		break;
+
+	default:
+		return -EOPNOTSUPP;
 	}
-	return -EINVAL;
+
+	return -EOPNOTSUPP;
 }
 
-static int thermal_read_string(struct device *dev, enum hwmon_sensor_types type, u32 attr, int channel, const char **str) {
+static int thermal_read_string(struct device *dev, enum hwmon_sensor_types type, u32 attr,
+			       int channel, const char **str)
+{
 	struct system76_data *data = dev_get_drvdata(dev);
 
-	if (type == hwmon_fan && attr == hwmon_fan_label) {
-		*str = system76_name(data->nfan, channel);
-		if (*str)
-			return 0;
-	} else if (type == hwmon_temp && attr == hwmon_temp_label) {
-		*str = system76_name(data->ntmp, channel);
-		if (*str)
-			return 0;
+	switch (type) {
+	case hwmon_fan:
+		if (attr == hwmon_fan_label) {
+			*str = system76_name(data->nfan, channel);
+			if (*str)
+				return 0;
+		}
+		break;
+
+	case hwmon_temp:
+		if (attr == hwmon_temp_label) {
+			*str = system76_name(data->ntmp, channel);
+			if (*str)
+				return 0;
+		}
+		break;
+
+	default:
+		return -EOPNOTSUPP;
 	}
-	return -EINVAL;
+
+	return -EOPNOTSUPP;
 }
 
 static const struct hwmon_ops thermal_ops = {
@@ -559,23 +603,23 @@ static const struct hwmon_channel_info *thermal_channel_info[] = {
 		HWMON_F_INPUT | HWMON_F_LABEL,
 		HWMON_F_INPUT | HWMON_F_LABEL),
 	HWMON_CHANNEL_INFO(pwm,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT,
-			HWMON_PWM_INPUT),
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT,
+		HWMON_PWM_INPUT),
 	HWMON_CHANNEL_INFO(temp,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL,
-			HWMON_T_INPUT | HWMON_T_LABEL),
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL,
+		HWMON_T_INPUT | HWMON_T_LABEL),
 	NULL
 };
 
@@ -586,7 +630,8 @@ static const struct hwmon_chip_info thermal_chip_info = {
 
 /* ACPI driver */
 
-static void input_key(struct system76_data *data, unsigned int code) {
+static void input_key(struct system76_data *data, unsigned int code)
+{
 	input_report_key(data->input, code, 1);
 	input_sync(data->input);
 
@@ -673,30 +718,43 @@ static int system76_add(struct acpi_device *acpi_dev)
 			return err;
 	}
 
-	system76_get_object(data, "NFAN", &data->nfan);
-	system76_get_object(data, "NTMP", &data->ntmp);
-	data->therm = devm_hwmon_device_register_with_info(&acpi_dev->dev, "system76_acpi", data, &thermal_chip_info, NULL);
-	if (IS_ERR(data->therm))
-		return PTR_ERR(data->therm);
-
 	data->input = devm_input_allocate_device(&acpi_dev->dev);
 	if (!data->input)
 		return -ENOMEM;
+
 	data->input->name = "System76 ACPI Hotkeys";
 	data->input->phys = "system76_acpi/input0";
 	data->input->id.bustype = BUS_HOST;
 	data->input->dev.parent = &acpi_dev->dev;
-	set_bit(EV_KEY, data->input->evbit);
-	set_bit(KEY_SCREENLOCK, data->input->keybit);
+	input_set_capability(data->input, EV_KEY, KEY_SCREENLOCK);
+
 	err = input_register_device(data->input);
-	if (err) {
-		input_free_device(data->input);
-		return err;
-	}
+	if (err)
+		goto error;
+
+	err = system76_get_object(data, "NFAN", &data->nfan);
+	if (err)
+		goto error;
+
+	err = system76_get_object(data, "NTMP", &data->ntmp);
+	if (err)
+		goto error;
+
+	data->therm = devm_hwmon_device_register_with_info(&acpi_dev->dev,
+		"system76_acpi", data, &thermal_chip_info, NULL);
+	err = PTR_ERR_OR_ZERO(data->therm);
+	if (err)
+		goto error;
 
 	system76_battery_init();
 
 	return 0;
+
+error:
+	kfree(data->ntmp);
+	kfree(data->nfan);
+	input_free_device(data->input);
+	return err;
 }
 
 // Remove a System76 ACPI device
@@ -712,12 +770,10 @@ static int system76_remove(struct acpi_device *acpi_dev)
 		device_remove_file(data->kb_led.dev, &kb_led_color_dev_attr);
 
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->ap_led);
-
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->kb_led);
-	if (data->nfan)
-		kfree(data->nfan);
-	if (data->ntmp)
-		kfree(data->ntmp);
+
+	kfree(data->nfan);
+	kfree(data->ntmp);
 
 	system76_get(data, "FINI");
 
