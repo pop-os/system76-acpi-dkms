@@ -732,8 +732,10 @@ static int system76_add(struct acpi_device *acpi_dev)
 	input_set_capability(data->input, EV_KEY, KEY_SCREENLOCK);
 
 	err = input_register_device(data->input);
-	if (err)
-		goto error;
+	if (err) {
+		input_free_device(data->input);
+		return err;
+	}
 
 	err = system76_get_object(data, "NFAN", &data->nfan);
 	if (err)
@@ -756,7 +758,6 @@ static int system76_add(struct acpi_device *acpi_dev)
 error:
 	kfree(data->ntmp);
 	kfree(data->nfan);
-	input_free_device(data->input);
 	return err;
 }
 
