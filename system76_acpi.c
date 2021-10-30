@@ -732,10 +732,8 @@ static int system76_add(struct acpi_device *acpi_dev)
 	input_set_capability(data->input, EV_KEY, KEY_SCREENLOCK);
 
 	err = input_register_device(data->input);
-	if (err) {
-		input_free_device(data->input);
-		return err;
-	}
+	if (err)
+		goto error;
 
 	err = system76_get_object(data, "NFAN", &data->nfan);
 	if (err)
