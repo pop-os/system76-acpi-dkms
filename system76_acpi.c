@@ -348,7 +348,7 @@ static ssize_t kb_led_color_show(
 	struct led_classdev *led;
 	struct system76_data *data;
 
-	led = (struct led_classdev *)dev->driver_data;
+	led = dev_get_drvdata(dev);
 	data = container_of(led, struct system76_data, kb_led);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 	return sysfs_emit(buf, "%06X\n", data->kb_color);
@@ -369,7 +369,7 @@ static ssize_t kb_led_color_store(
 	unsigned int val;
 	int ret;
 
-	led = (struct led_classdev *)dev->driver_data;
+	led = dev_get_drvdata(dev);
 	data = container_of(led, struct system76_data, kb_led);
 	ret = kstrtouint(buf, 16, &val);
 	if (ret)
