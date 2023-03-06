@@ -761,7 +761,11 @@ error:
 }
 
 // Remove a System76 ACPI device
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 static void system76_remove(struct acpi_device *acpi_dev)
+#else
+static int system76_remove(struct acpi_device *acpi_dev)
+#endif
 {
 	struct system76_data *data;
 
@@ -777,6 +781,10 @@ static void system76_remove(struct acpi_device *acpi_dev)
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->kb_led);
 
 	system76_get(data, "FINI");
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
+	return 0;
+#endif
 }
 
 static struct acpi_driver system76_driver = {
