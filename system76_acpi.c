@@ -149,8 +149,6 @@ static int system76_set(struct system76_data *data, char *method, int value)
 		return -1;
 }
 
-/* Battery */
-
 #define BATTERY_THRESHOLD_INVALID	0xFF
 
 enum {
@@ -261,7 +259,11 @@ static struct attribute *system76_battery_attrs[] = {
 
 ATTRIBUTE_GROUPS(system76_battery);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
+static int system76_battery_add(struct power_supply *battery, struct acpi_battery_hook *hook)
+#else
 static int system76_battery_add(struct power_supply *battery)
+#endif
 {
 	// System76 EC only supports 1 battery
 	if (strcmp(battery->desc->name, "BAT0") != 0)
@@ -273,7 +275,11 @@ static int system76_battery_add(struct power_supply *battery)
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
+static int system76_battery_remove(struct power_supply *battery, struct acpi_battery_hook *hook)
+#else
 static int system76_battery_remove(struct power_supply *battery)
+#endif
 {
 	device_remove_groups(&battery->dev, system76_battery_groups);
 	return 0;
@@ -294,8 +300,6 @@ static void system76_battery_exit(void)
 {
 	battery_hook_unregister(&system76_battery_hook);
 }
-
-/* Keyboard */
 
 // Get the airplane mode LED brightness
 static enum led_brightness ap_led_get(struct led_classdev *led)
@@ -490,8 +494,6 @@ static void kb_led_hotkey_color(struct system76_data *data)
 	kb_led_notify(data);
 }
 
-/* hwmon */
-
 static umode_t thermal_is_visible(const void *drvdata, enum hwmon_sensor_types type,
 				  u32 attr, int channel)
 {
@@ -632,8 +634,6 @@ static const struct hwmon_chip_info thermal_chip_info = {
 	.info = thermal_channel_info,
 };
 
-/* ACPI driver */
-
 static void input_key(struct system76_data *data, unsigned int code)
 {
 	input_report_key(data->input, code, 1);
@@ -683,8 +683,8 @@ static int system76_add(struct acpi_device *acpi_dev)
 	acpi_dev->driver_data = data;
 	data->acpi_dev = acpi_dev;
 
-	// Some models do not run Open EC firmware. Check for an ACPI method that
-	// only exists on Open EC to guard functionality specific to it.
+	// Some models do not run open EC firmware. Check for an ACPI method
+	// that only exists on open EC to guard functionality specific to it.
 	data->has_open_ec = acpi_has_method(acpi_device_handle(data->acpi_dev), "NFAN");
 
 	err = system76_get(data, "INIT");
@@ -714,7 +714,6 @@ static int system76_add(struct acpi_device *acpi_dev)
 		data->kb_led.max_brightness = 5;
 		data->kb_color = -1;
 	}
-
 	err = devm_led_classdev_register(&acpi_dev->dev, &data->kb_led);
 	if (err)
 		return err;
@@ -741,16 +740,15 @@ static int system76_add(struct acpi_device *acpi_dev)
 		err = system76_get_object(data, "NTMP", &data->ntmp);
 		if (err)
 			goto error;
-	}
 
-	data->therm = devm_hwmon_device_register_with_info(&acpi_dev->dev,
-		"system76_acpi", data, &thermal_chip_info, NULL);
-	err = PTR_ERR_OR_ZERO(data->therm);
-	if (err)
-		goto error;
+		data->therm = devm_hwmon_device_register_with_info(&acpi_dev->dev,
+			"system76_acpi", data, &thermal_chip_info, NULL);
+		err = PTR_ERR_OR_ZERO(data->therm);
+		if (err)
+			goto error;
 
-	if (data->has_open_ec)
 		system76_battery_init();
+	}
 
 	return 0;
 
@@ -763,7 +761,7 @@ error:
 }
 
 // Remove a System76 ACPI device
-static int system76_remove(struct acpi_device *acpi_dev)
+static void system76_remove(struct acpi_device *acpi_dev)
 {
 	struct system76_data *data;
 
@@ -779,8 +777,6 @@ static int system76_remove(struct acpi_device *acpi_dev)
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->kb_led);
 
 	system76_get(data, "FINI");
-
-	return 0;
 }
 
 static struct acpi_driver system76_driver = {
