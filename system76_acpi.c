@@ -144,6 +144,11 @@ static int system76_set(struct system76_data *data, char *method, int value)
 	acpi_handle handle;
 	acpi_status status;
 
+	// log a message to dmesg when ACPI method is 
+	if (!acpi_has_method(acpi_device_handle(data->acpi_dev), method)) {
+		printk(KERN_INFO "method %s unsupported\n", method);
+	}
+
 	obj.type = ACPI_TYPE_INTEGER;
 	obj.integer.value = value;
 	obj_list.count = 1;
