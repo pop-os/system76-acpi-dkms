@@ -492,8 +492,9 @@ static void kb_led_hotkey_color(struct system76_data *data)
 {
 	int i;
 
-	if (data->kb_color < 0)
+	if (data->kbled_type != KBLED_RGB)
 		return;
+
 	if (data->kb_brightness > 0) {
 		for (i = 0; i < ARRAY_SIZE(kb_colors); i++) {
 			if (kb_colors[i] == data->kb_color)
@@ -716,29 +717,23 @@ static int system76_add(struct acpi_device *acpi_dev)
 	if (err)
 		return err;
 
+	data->kb_led.name = "system76_acpi::kbd_backlight";
+	data->kb_led.flags = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
+	data->kb_led.brightness_get = kb_led_get;
+	data->kb_led.brightness_set_blocking = kb_led_set;
 	if (acpi_has_method(acpi_device_handle(data->acpi_dev), "GKBK")) {
 		// Use the new ACPI methods
 		data->kbled_type = system76_get(data, "GKBK");
 
 		switch (data->kbled_type) {
 		case KBLED_NONE:
-			data->kb_led.max_brightness = 0;
-			data->kb_color = -1;
+			// Nothing to do: Device will not be registered.
 			break;
 		case KBLED_WHITE:
-			data->kb_led.name = "system76_acpi::kbd_backlight";
-			data->kb_led.flags = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
-			data->kb_led.brightness_get = kb_led_get;
-			data->kb_led.brightness_set_blocking = kb_led_set;
 			data->kb_led.max_brightness = 255;
 			data->kb_toggle_brightness = 72;
-			data->kb_color = 0xffffff;
 			break;
 		case KBLED_RGB:
-			data->kb_led.name = "system76_acpi::kbd_backlight";
-			data->kb_led.flags = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
-			data->kb_led.brightness_get = kb_led_get;
-			data->kb_led.brightness_set_blocking = kb_led_set;
 			data->kb_led.max_brightness = 255;
 			data->kb_led.groups = system76_kb_led_color_groups;
 			data->kb_toggle_brightness = 72;
@@ -748,25 +743,24 @@ static int system76_add(struct acpi_device *acpi_dev)
 		}
 	} else {
 		// Use the old ACPI methods
-		data->kb_led.name = "system76_acpi::kbd_backlight";
-		data->kb_led.flags = LED_BRIGHT_HW_CHANGED | LED_CORE_SUSPENDRESUME;
-		data->kb_led.brightness_get = kb_led_get;
-		data->kb_led.brightness_set_blocking = kb_led_set;
 		if (acpi_has_method(acpi_device_handle(data->acpi_dev), "SKBC")) {
+			data->kbled_type = KBLED_RGB;
 			data->kb_led.max_brightness = 255;
 			data->kb_led.groups = system76_kb_led_color_groups;
 			data->kb_toggle_brightness = 72;
 			data->kb_color = 0xffffff;
 			system76_set(data, "SKBC", data->kb_color);
 		} else {
+			data->kbled_type = KBLED_WHITE;
 			data->kb_led.max_brightness = 5;
-			data->kb_color = -1;
 		}
 	}
 
-	err = devm_led_classdev_register(&acpi_dev->dev, &data->kb_led);
-	if (err)
-		return err;
+	if (data->kbled_type != KBLED_NONE) {
+		err = devm_led_classdev_register(&acpi_dev->dev, &data->kb_led);
+		if (err)
+			return err;
+	}
 
 	data->input = devm_input_allocate_device(&acpi_dev->dev);
 	if (!data->input)
