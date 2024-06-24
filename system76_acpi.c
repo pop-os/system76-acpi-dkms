@@ -44,6 +44,7 @@ struct system76_data {
 	struct input_dev *input;
 	bool has_open_ec;
 	enum kbled_type kbled_type;
+	int fan_duty;
 };
 
 static const struct acpi_device_id device_ids[] = {
@@ -517,12 +518,12 @@ static umode_t thermal_is_visible(const void *drvdata, enum hwmon_sensor_types t
 	const struct system76_data *data = drvdata;
 
 	switch (type) {
-	case hwmon_fan:
 	case hwmon_pwm:
 		if (system76_name(data->nfan, channel))
-			return 0444;
+			return 0644;
 		break;
 
+	case hwmon_fan:
 	case hwmon_temp:
 		if (system76_name(data->ntmp, channel))
 			return 0444;
@@ -579,6 +580,31 @@ static int thermal_read(struct device *dev, enum hwmon_sensor_types type, u32 at
 	return -EOPNOTSUPP;
 }
 
+static int thermal_write(struct device *dev, enum hwmon_sensor_types type, u32 attr,
+			int channel, long val)
+{
+	struct system76_data *data = dev_get_drvdata(dev);
+	int raw;
+
+	switch (type) {
+	case hwmon_pwm:
+		if (attr == hwmon_pwm_input) {
+			char method[5];
+			snprintf(method, sizeof method, "SFD%d", channel);
+
+			data->fan_duty = val;
+
+			return system76_set(data, method, (int)data->fan_duty);
+		}
+		break;
+
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return -EOPNOTSUPP;
+}
+
 static int thermal_read_string(struct device *dev, enum hwmon_sensor_types type, u32 attr,
 			       int channel, const char **str)
 {
@@ -612,6 +638,7 @@ static const struct hwmon_ops thermal_ops = {
 	.is_visible = thermal_is_visible,
 	.read = thermal_read,
 	.read_string = thermal_read_string,
+	.write = thermal_write,
 };
 
 // Allocate up to 8 fans and temperatures
