@@ -2,7 +2,7 @@
 /*
  * System76 ACPI Driver
  *
- * Copyright (C) 2019 System76
+ * Copyright (C) 2023 System76
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
