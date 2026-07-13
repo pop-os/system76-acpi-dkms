@@ -21,7 +21,6 @@
 #include <linux/power_supply.h>
 #include <linux/sysfs.h>
 #include <linux/types.h>
-#include <linux/version.h>
 
 #include <acpi/battery.h>
 
@@ -187,11 +186,7 @@ static ssize_t battery_get_threshold(int which, char *buf)
 	if (ret == BATTERY_THRESHOLD_INVALID)
 		return -EINVAL;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 	return sysfs_emit(buf, "%d\n", (int)ret);
-#else
-	return sprintf(buf, "%d\n", (int)ret);
-#endif
 }
 
 static ssize_t battery_set_threshold(int which, const char *buf, size_t count)
@@ -266,11 +261,7 @@ static struct attribute *system76_battery_attrs[] = {
 
 ATTRIBUTE_GROUPS(system76_battery);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 static int system76_battery_add(struct power_supply *battery, struct acpi_battery_hook *hook)
-#else
-static int system76_battery_add(struct power_supply *battery)
-#endif
 {
 	// System76 EC only supports 1 battery
 	if (strcmp(battery->desc->name, "BAT0") != 0)
@@ -282,11 +273,7 @@ static int system76_battery_add(struct power_supply *battery)
 	return 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 static int system76_battery_remove(struct power_supply *battery, struct acpi_battery_hook *hook)
-#else
-static int system76_battery_remove(struct power_supply *battery)
-#endif
 {
 	device_remove_groups(&battery->dev, system76_battery_groups);
 	return 0;
@@ -365,11 +352,7 @@ static ssize_t kb_led_color_show(
 
 	led = dev_get_drvdata(dev);
 	data = container_of(led, struct system76_data, kb_led);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 	return sysfs_emit(buf, "%06X\n", data->kb_color);
-#else
-	return sprintf(buf, "%06X\n", data->kb_color);
-#endif
 }
 
 // Set the keyboard LED color
@@ -805,11 +788,7 @@ error:
 }
 
 // Remove a System76 ACPI device
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0)
 static void system76_remove(struct acpi_device *acpi_dev)
-#else
-static int system76_remove(struct acpi_device *acpi_dev)
-#endif
 {
 	struct system76_data *data;
 
@@ -825,10 +804,6 @@ static int system76_remove(struct acpi_device *acpi_dev)
 	devm_led_classdev_unregister(&acpi_dev->dev, &data->kb_led);
 
 	system76_get(data, "FINI");
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0)
-	return 0;
-#endif
 }
 
 static struct acpi_driver system76_driver = {
